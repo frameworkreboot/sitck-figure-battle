@@ -56,13 +56,13 @@
             draw(ctx) { } update(deltaTime, gameEntities, projectiles) { } getCenter() { return { x: this.x + this.width / 2, y: this.y + this.height / 2 }; } getBoundingBox() { return { x: this.x, y: this.y, width: this.width, height: this.height }; } takeDamage(amount) { this.hp -= amount; if (this.hp <= 0) { this.hp = 0; return true; } return false; } drawHealthBar(ctx) { if (this.hp < this.maxHp && this.hp > 0) { const barWidth = this.width; const barX = this.x; const barY = this.y - CONFIG.HEALTH_BAR_HEIGHT - 2; const hpRatio = this.hp / this.maxHp; ctx.fillStyle = CONFIG.HEALTH_BAR_BACKGROUND; ctx.fillRect(barX, barY, barWidth, CONFIG.HEALTH_BAR_HEIGHT); ctx.fillStyle = CONFIG.HEALTH_BAR_COLOR; ctx.fillRect(barX, barY, barWidth * hpRatio, CONFIG.HEALTH_BAR_HEIGHT); } }
         }
 
-        class Unit extends Entity { // Constructor, state machine, findTarget, performAttack, draw remain the same
+        class Unit extends Entity { // Constructor, state machine, findTarget, performAttack remain the same
             constructor(x, y, owner, type) { const stats = CONFIG.UNIT_STATS[type]; if (!stats) { throw new Error(`Invalid unit type: ${type}`); } super(x, y, CONFIG.UNIT_SIZE, CONFIG.UNIT_SIZE * 2, stats.hp, owner, type.charAt(0).toLowerCase()); this.type = type; this.stats = stats; this.target = null; this.state = 'idle'; this.attackCooldown = 0; this.miningCooldown = 0; this.color = CONFIG.UNIT_COLORS[owner]?.[type] || (owner === 'player' ? 'grey' : 'black'); }
             setTarget(target) { this.target = target; if (target && typeof target.x !== 'undefined' && typeof target.y !== 'undefined') { if (target instanceof Entity) { if (this.type === 'Worker' && target.stats?.is_mine && target.owner === this.owner) { this.state = 'moving_to_mine'; } else if (target.owner !== this.owner) { this.state = 'moving_to_attack'; } else { this.state = 'moving'; } } else { this.state = 'moving'; } } else { this.state = 'idle'; this.target = null; } }
             update(deltaTime, gameEntities, projectiles) { this.attackCooldown = Math.max(0, this.attackCooldown - deltaTime); this.miningCooldown = Math.max(0, this.miningCooldown - deltaTime); switch (this.state) { case 'idle': if (this.type !== 'Worker') { this.findTarget(gameEntities); } break; case 'moving': if (!this.target) { this.state = 'idle'; break; } const targetPosMove = this.target instanceof Entity ? this.target.getCenter() : this.target; this.moveTowards(targetPosMove.x, targetPosMove.y, gameEntities); if (distance(this.getCenter().x, this.getCenter().y, targetPosMove.x, targetPosMove.y) < this.stats.speed + 1) { this.state = 'idle'; this.target = null; } break; case 'moving_to_mine': if (!this.target || this.target.hp <= 0 || !this.target.stats?.is_mine) { this.state = 'idle'; this.target = null; break; } const mineCenter = this.target.getCenter(); if (distance(this.getCenter().x, this.getCenter().y, mineCenter.x, mineCenter.y) < this.target.width / 2 + this.width) { this.state = 'mining'; if(this.owner === 'ai') console.log(`AI: Worker ${this.id} reached mine ${this.target.id}, switching to mining state.`); } else { this.moveTowards(mineCenter.x, mineCenter.y, gameEntities); } break; case 'mining': if (!this.target || this.target.hp <= 0 || !this.target.stats?.is_mine) { this.state = 'idle'; this.target = null; break; } if (this.miningCooldown <= 0) { game.addGold(CONFIG.MINE_GOLD_RATE, this.owner); this.miningCooldown = CONFIG.RESOURCE_INTERVAL; } break; case 'moving_to_attack': if (!this.target || this.target.hp <= 0 || this.target.owner === this.owner) { this.state = 'idle'; this.target = null; this.findTarget(gameEntities); break; } const targetCenterMoveAttack = this.target.getCenter(); const distToTargetMoveAttack = distance(this.getCenter().x, this.getCenter().y, targetCenterMoveAttack.x, targetCenterMoveAttack.y); if (distToTargetMoveAttack <= this.stats.range - this.width / 2) { this.state = 'attacking'; } else { this.moveTowards(targetCenterMoveAttack.x, targetCenterMoveAttack.y, gameEntities); } break; case 'attacking': if (!this.target || this.target.hp <= 0 || this.target.owner === this.owner) { this.state = 'idle'; this.target = null; this.findTarget(gameEntities); break; } const targetCenterAttack = this.target.getCenter(); const distToTargetAttack = distance(this.getCenter().x, this.getCenter().y, targetCenterAttack.x, targetCenterAttack.y); if (distToTargetAttack > this.stats.range) { this.state = 'moving_to_attack'; break; } if (this.attackCooldown <= 0) { this.performAttack(projectiles); this.attackCooldown = CONFIG.ATTACK_INTERVAL; } break; } }
-            findTarget(entities) { if (this.state !== 'idle') return; let closestEnemy = null; let minDistance = Infinity; const sightRange = this.stats.range * 2.5; /* Increased sight range slightly */ entities.forEach(entity => { if (entity.owner !== this.owner && entity.hp > 0 && (entity instanceof Unit || entity instanceof Building)) { const d = distance(this.getCenter().x, this.getCenter().y, entity.getCenter().x, entity.getCenter().y); if (d < sightRange && d < minDistance) { minDistance = d; closestEnemy = entity; } } }); if (closestEnemy) { this.setTarget(closestEnemy); } }
+            findTarget(entities) { if (this.state !== 'idle') return; let closestEnemy = null; let minDistance = Infinity; const sightRange = this.stats.range * 2.5; entities.forEach(entity => { if (entity.owner !== this.owner && entity.hp > 0 && (entity instanceof Unit || entity instanceof Building)) { const d = distance(this.getCenter().x, this.getCenter().y, entity.getCenter().x, entity.getCenter().y); if (d < sightRange && d < minDistance) { minDistance = d; closestEnemy = entity; } } }); if (closestEnemy) { this.setTarget(closestEnemy); } }
 
-            // --- MODIFIED moveTowards to implement sliding collision ---
+            // --- MODIFIED moveTowards: Checks collision vs Buildings too ---
             moveTowards(targetX, targetY, gameEntities) {
                 const moveSpeed = this.stats.speed;
                 const center = this.getCenter();
@@ -79,12 +79,15 @@
                     const nextBox = { x: nextX, y: nextY, width: this.width, height: this.height };
 
                     let collidingObstacle = null;
-                    // Check collision ONLY with other units
+                    // Check collision with other units AND buildings
                     for (const entity of gameEntities) {
-                        if (entity instanceof Unit && entity !== this && entity.getBoundingBox) {
-                            if (isColliding(nextBox, entity.getBoundingBox())) {
-                                collidingObstacle = entity;
-                                break;
+                        if (entity !== this && entity.getBoundingBox) { // Check against all other entities
+                            // Special check for units vs units, units vs buildings
+                            if (entity instanceof Unit || entity instanceof Building) {
+                                if (isColliding(nextBox, entity.getBoundingBox())) {
+                                    collidingObstacle = entity;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -100,36 +103,23 @@
                         const pushY = center.y - obstacleCenter.y;
                         const pushDist = Math.sqrt(pushX * pushX + pushY * pushY);
 
-                        let slideX = 0;
-                        let slideY = 0;
-
-                        if (pushDist > 0.1) { // Avoid division by zero if perfectly overlapped
-                            // Calculate perpendicular vector (slide direction)
-                            // Normalize the push vector first
-                            const normPushX = pushX / pushDist;
-                            const normPushY = pushY / pushDist;
-                            // Perpendicular vector (rotate 90 degrees)
-                            slideX = -normPushY;
-                            slideY = normPushX;
-                        } else {
-                            // If perfectly overlapped, pick a random direction to slide
-                            const randomAngle = Math.random() * Math.PI * 2;
-                            slideX = Math.cos(randomAngle);
-                            slideY = Math.sin(randomAngle);
+                        let slideX = 0; let slideY = 0;
+                        if (pushDist > 0.1) {
+                            const normPushX = pushX / pushDist; const normPushY = pushY / pushDist;
+                            slideX = -normPushY; slideY = normPushX; // Perpendicular vector
+                        } else { // If perfectly overlapped, slide randomly
+                            const randomAngle = Math.random() * Math.PI * 2; slideX = Math.cos(randomAngle); slideY = Math.sin(randomAngle);
                         }
 
-
-                        // Apply sliding movement
                         const slideMoveX = slideX * moveSpeed * 0.8; // Slide slightly slower
                         const slideMoveY = slideY * moveSpeed * 0.8;
-
-                        // Check if slide position is also blocked (simple check, could be improved)
-                        const slideNextX = this.x + slideMoveX;
-                        const slideNextY = this.y + slideMoveY;
+                        const slideNextX = this.x + slideMoveX; const slideNextY = this.y + slideMoveY;
                         const slideNextBox = { x: slideNextX, y: slideNextY, width: this.width, height: this.height };
+
                         let slideCollision = false;
+                        // Check if slide position is also blocked by units or buildings
                         for (const entity of gameEntities) {
-                           if (entity instanceof Unit && entity !== this && entity.getBoundingBox) {
+                           if (entity !== this && (entity instanceof Unit || entity instanceof Building) && entity.getBoundingBox) {
                                if (isColliding(slideNextBox, entity.getBoundingBox())) {
                                    slideCollision = true;
                                    break;
@@ -137,13 +127,10 @@
                            }
                         }
 
-                        if (!slideCollision) {
-                           this.x = slideNextX;
-                           this.y = slideNextY;
-                        } else {
-                            // If slide is also blocked, maybe just stop or try other perpendicular? Stop for now.
-                            // console.log(`${this.id} slide blocked`); // DEBUG
+                        if (!slideCollision) { // Move if slide path clear
+                           this.x = slideNextX; this.y = slideNextY;
                         }
+                        // If slide is also blocked, unit effectively stops this frame
                     }
                 }
                 // Clamp position to stay within canvas bounds
@@ -152,14 +139,38 @@
             }
 
             performAttack(projectiles) { if (!this.target || this.target.hp <= 0) return; if (this.stats.type === 'ranged') { const startPos = this.getCenter(); const targetPos = this.target.getCenter(); if (projectiles && typeof projectiles.push === 'function') { projectiles.push(new Projectile(startPos.x, startPos.y, targetPos.x, targetPos.y, this.stats.attack, this.owner, this.target)); } else { console.error("Projectiles array is invalid in performAttack"); } } else { const isDead = this.target.takeDamage(this.stats.attack); if (isDead) { this.state = 'idle'; this.target = null; } } }
-            draw(ctx) { if (!ctx) { return; } ctx.strokeStyle = this.color; ctx.lineWidth = 2; ctx.beginPath(); const headRadius = this.width / 2; const bodyTopY = this.y + headRadius * 2; const bodyBottomY = this.y + this.height * 0.8; const neckY = this.y + headRadius; const centerX = this.x + headRadius; const armY = this.y + this.height * 0.5; const handX = this.x + this.width; ctx.arc(centerX, neckY, headRadius, 0, Math.PI * 2); ctx.moveTo(centerX, bodyTopY); ctx.lineTo(centerX, bodyBottomY); ctx.moveTo(centerX, bodyBottomY); ctx.lineTo(this.x, this.y + this.height); ctx.moveTo(centerX, bodyBottomY); ctx.lineTo(this.x + this.width, this.y + this.height); ctx.moveTo(this.x, armY); ctx.lineTo(handX, armY); ctx.stroke(); ctx.strokeStyle = 'grey'; ctx.lineWidth = 1.5; ctx.beginPath(); if (this.type === 'Soldier') { const spearLength = this.height * 0.8; const spearEndX = handX + spearLength * 0.707; const spearEndY = armY - spearLength * 0.707; ctx.moveTo(handX, armY); ctx.lineTo(spearEndX, spearEndY); ctx.moveTo(spearEndX, spearEndY); ctx.lineTo(spearEndX - 5, spearEndY - 2); ctx.moveTo(spearEndX, spearEndY); ctx.lineTo(spearEndX - 2, spearEndY - 5); } else if (this.type === 'Archer') { const bowRadius = this.height * 0.4; ctx.arc(handX - bowRadius * 0.2, armY, bowRadius, Math.PI * 1.3, Math.PI * 0.7, true); } ctx.stroke(); this.drawHealthBar(ctx); if (this.selected) { ctx.strokeStyle = CONFIG.SELECTION_COLOR; ctx.lineWidth = 1; ctx.strokeRect(this.x - 2, this.y - 2, this.width + 4, this.height + 4); } if ((this.state === 'moving' || this.state === 'moving_to_attack' || this.state === 'moving_to_mine') && this.target) { ctx.strokeStyle = 'rgba(128, 128, 128, 0.5)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(this.getCenter().x, this.getCenter().y); const targetPosLine = this.target instanceof Entity ? this.target.getCenter() : this.target; ctx.lineTo(targetPosLine.x, targetPosLine.y); ctx.stroke(); } }
+
+            // --- MODIFIED draw method to add combat indicator ---
+            draw(ctx) {
+                if (!ctx) { return; }
+                // Draw basic body (same as before)
+                ctx.strokeStyle = this.color; ctx.lineWidth = 2; ctx.beginPath();
+                const headRadius = this.width / 2; const bodyTopY = this.y + headRadius * 2; const bodyBottomY = this.y + this.height * 0.8; const neckY = this.y + headRadius; const centerX = this.x + headRadius; const armY = this.y + this.height * 0.5; const handX = this.x + this.width;
+                ctx.arc(centerX, neckY, headRadius, 0, Math.PI * 2); ctx.moveTo(centerX, bodyTopY); ctx.lineTo(centerX, bodyBottomY); ctx.moveTo(centerX, bodyBottomY); ctx.lineTo(this.x, this.y + this.height); ctx.moveTo(centerX, bodyBottomY); ctx.lineTo(this.x + this.width, this.y + this.height); ctx.moveTo(this.x, armY); ctx.lineTo(handX, armY); ctx.stroke();
+                // Draw weapons (same as before)
+                ctx.strokeStyle = 'grey'; ctx.lineWidth = 1.5; ctx.beginPath(); if (this.type === 'Soldier') { const spearLength = this.height * 0.8; const spearEndX = handX + spearLength * 0.707; const spearEndY = armY - spearLength * 0.707; ctx.moveTo(handX, armY); ctx.lineTo(spearEndX, spearEndY); ctx.moveTo(spearEndX, spearEndY); ctx.lineTo(spearEndX - 5, spearEndY - 2); ctx.moveTo(spearEndX, spearEndY); ctx.lineTo(spearEndX - 2, spearEndY - 5); } else if (this.type === 'Archer') { const bowRadius = this.height * 0.4; ctx.arc(handX - bowRadius * 0.2, armY, bowRadius, Math.PI * 1.3, Math.PI * 0.7, true); } ctx.stroke();
+
+                // --- NEW: Combat Indicator ---
+                if (this.state === 'attacking') {
+                    ctx.fillStyle = 'red';
+                    ctx.font = 'bold 14px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('!', centerX, this.y - 5); // Draw exclamation mark above head
+                }
+
+                // Health bar and selection indicator (same as before)
+                this.drawHealthBar(ctx);
+                if (this.selected) { ctx.strokeStyle = CONFIG.SELECTION_COLOR; ctx.lineWidth = 1; ctx.strokeRect(this.x - 2, this.y - 2, this.width + 4, this.height + 4); }
+                // Target line (same as before)
+                if ((this.state === 'moving' || this.state === 'moving_to_attack' || this.state === 'moving_to_mine') && this.target) { ctx.strokeStyle = 'rgba(128, 128, 128, 0.5)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(this.getCenter().x, this.getCenter().y); const targetPosLine = this.target instanceof Entity ? this.target.getCenter() : this.target; ctx.lineTo(targetPosLine.x, targetPosLine.y); ctx.stroke(); }
+            }
         }
-        class Building extends Entity {
+        class Building extends Entity { // Building class - constructor, update, draw remain the same
             constructor(x, y, owner, type) { const stats = CONFIG.BUILDING_STATS[type]; if (!stats) { throw new Error(`Invalid building type: ${type}`); } super(x, y, stats.size, stats.size, stats.hp, owner, type.charAt(0).toLowerCase()); this.type = type; this.stats = stats; this.color = stats.color || (owner === 'player' ? CONFIG.BUILDING_COLOR_PLAYER : CONFIG.BUILDING_COLOR_AI); this.is_mine = stats.is_mine ?? false; this.provides_workers = stats.provides_workers ?? false; this.enables_combat_units = stats.enables_combat_units ?? false; this.attackCooldown = 0; }
             update(deltaTime, gameEntities, projectiles) { if (this.type === 'Tower' && this.hp > 0 && this.stats.attack && this.stats.range) { this.attackCooldown = Math.max(0, this.attackCooldown - deltaTime); if (this.attackCooldown <= 0) { let target = null; let minDist = this.stats.range; gameEntities.forEach(entity => { if (entity instanceof Unit && entity.owner !== this.owner && entity.hp > 0) { const d = distance(this.getCenter().x, this.getCenter().y, entity.getCenter().x, entity.getCenter().y); if (d < minDist) { minDist = d; target = entity; } } }); if (target) { const startPos = this.getCenter(); const targetPos = target.getCenter(); if (projectiles && typeof projectiles.push === 'function') { projectiles.push(new Projectile(startPos.x, startPos.y, targetPos.x, targetPos.y, this.stats.attack, this.owner, target)); this.attackCooldown = this.stats.attack_speed || 1500; } } } } }
             draw(ctx) { if (!ctx) { return; } ctx.fillStyle = this.color; ctx.strokeStyle = 'black'; ctx.lineWidth = 1; ctx.fillRect(this.x, this.y, this.width, this.height); ctx.strokeRect(this.x, this.y, this.width, this.height); ctx.fillStyle = 'white'; ctx.font = '10px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; let symbol = '?'; switch(this.type) { case 'Base': symbol = 'B'; break; case 'Wall': symbol = ''; break; case 'Tower': symbol = 'T'; break; case 'Barracks': symbol = 'R'; break; case 'Mine': symbol = 'M'; break; default: symbol = this.type.charAt(0); } if (symbol) { ctx.fillText(symbol, this.x + this.width / 2, this.y + this.height / 2); } this.drawHealthBar(ctx); if (this.selected) { ctx.strokeStyle = CONFIG.SELECTION_COLOR; ctx.lineWidth = 1; ctx.strokeRect(this.x - 2, this.y - 2, this.width + 4, this.height + 4); } }
         }
-        class Projectile extends Entity {
+        class Projectile extends Entity { // Projectile class - constructor, update, draw remain the same
              constructor(startX, startY, targetX, targetY, damage, owner, targetEntity) { super(startX, startY, CONFIG.PROJECTILE_SIZE, CONFIG.PROJECTILE_SIZE, 1, owner, 'p'); this.damage = damage; this.startX = startX; this.startY = startY; this.targetEntity = targetEntity; const dx = targetX - startX; const dy = targetY - startY; const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy)); this.velocityX = (dx / dist) * CONFIG.PROJECTILE_SPEED; this.velocityY = (dy / dist) * CONFIG.PROJECTILE_SPEED; this.color = CONFIG.PROJECTILE_COLOR; this.maxRange = 2000; }
              update(deltaTime, gameEntities, projectiles) { this.x += this.velocityX; this.y += this.velocityY; if (this.targetEntity && this.targetEntity.hp > 0) { if (isColliding(this.getBoundingBox(), this.targetEntity.getBoundingBox())) { this.targetEntity.takeDamage(this.damage); this.hp = 0; return; } } const distTraveled = distance(this.startX, this.startY, this.x, this.y); if (this.x < -this.width || this.x > CONFIG.CANVAS_WIDTH || this.y < -this.height || this.y > CONFIG.CANVAS_HEIGHT || distTraveled > this.maxRange) { this.hp = 0; } }
              draw(ctx) { if (!ctx) { return; } ctx.fillStyle = this.color; ctx.beginPath(); ctx.arc(this.x, this.y, this.width, 0, Math.PI * 2); ctx.fill(); }
@@ -218,9 +229,9 @@
                  let spawner = null; const requiredBuildingType = (type === 'Worker') ? 'Base' : 'Barracks';
                  for (const entity of this.entities) { if (entity instanceof Building && entity.owner === owner && entity.type === requiredBuildingType && entity.hp > 0) { spawner = entity; break; } }
                  if (!spawner) { if (owner === 'player') { this.showMessage(`Need a ${requiredBuildingType} to train ${type}!`, 1500); } else { console.log(`AI: Cannot train ${type}, no ${requiredBuildingType}.`); } return; }
-                 if (owner === 'ai') { console.log(`AI: Found spawner ${spawner.id} (${spawner.type}) for training ${type}.`); }
+                 if (owner === 'ai') { /* console.log(`AI: Found spawner ${spawner.id} (${spawner.type}) for training ${type}.`); */ } // Reduced logging
                  const currentGold = (owner === 'player' ? this.playerGold : this.aiGold);
-                 if (owner === 'ai') { console.log(`AI: Checking gold for ${type}. Have ${currentGold}, need ${stats.cost}`); }
+                 if (owner === 'ai') { /* console.log(`AI: Checking gold for ${type}. Have ${currentGold}, need ${stats.cost}`); */ } // Reduced logging
                  if (this.spendGold(stats.cost, owner)) {
                     let spawnX = spawner.x + spawner.width / 2; let spawnY = spawner.y + spawner.height + CONFIG.UNIT_SIZE; let foundSpot = false; const maxAttempts = 16; const radius = spawner.width * 0.8;
                     if (!this.isSpawnPointOccupied(spawnX, spawnY)) { foundSpot = true; }
@@ -246,7 +257,7 @@
                      if (worker.state === 'idle' && aiMines.length > 0) {
                          const targetMine = aiMines.find(m => m.hp > 0); // Find *any* valid mine
                          if (targetMine) {
-                             console.log(`AI: Assigning idle worker ${worker.id} to mine ${targetMine.id}.`); // DEBUG
+                             // console.log(`AI: Assigning idle worker ${worker.id} to mine ${targetMine.id}.`); // DEBUG (Spammy)
                              worker.setTarget(targetMine);
                          }
                      }
@@ -261,9 +272,9 @@
                         if (buildType === 'Mine') { buildCenterX = baseCenter.x - offset; buildCenterY = baseCenter.y - offset; }
                         else { buildCenterX = baseCenter.x - offset; buildCenterY = baseCenter.y + offset; } // Barracks
 
-                        console.log(`AI: Attempting fixed placement for ${buildType} near (${buildCenterX.toFixed(0)}, ${buildCenterY.toFixed(0)})`);
+                        // console.log(`AI: Attempting fixed placement for ${buildType} near (${buildCenterX.toFixed(0)}, ${buildCenterY.toFixed(0)})`); // DEBUG
                         if (this.canPlaceBuilding(buildType, buildCenterX, buildCenterY)) {
-                            console.log(`AI: Placement valid for ${buildType}. Spending ${cost}G...`);
+                            // console.log(`AI: Placement valid for ${buildType}. Spending ${cost}G...`); // DEBUG
                             if (this.spendGold(cost, 'ai')) { const buildX = buildCenterX - stats.size / 2; const buildY = buildCenterY - stats.size / 2; this.entities.push(new Building(buildX, buildY, 'ai', buildType)); placed = true; console.log(`AI: Successfully placed ${buildType}.`); }
                             else { console.log(`AI: Placement valid but failed to spend ${cost}G for ${buildType} (Current Gold: ${this.aiGold}).`); }
                         } else { console.log(`AI: Fixed placement invalid for ${buildType}.`); }
