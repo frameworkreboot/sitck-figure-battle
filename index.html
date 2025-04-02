@@ -370,16 +370,16 @@
                 // Warn if UI elements are missing
                 if (!this.resourceDisplay) console.warn("Resource display element not found."); if (!this.messageBox) console.warn("Message box element not found."); Object.entries(this.buildButtons).forEach(([key, value]) => { if (!value) console.warn(`Build button for ${key} not found.`); }); Object.entries(this.trainButtons).forEach(([key, value]) => { if (!value) console.warn(`Train button for ${key} not found.`); });
 
-                // Set canvas resolution and handle resizing
-                this.setCanvasResolution();
-                window.addEventListener('resize', () => this.setCanvasResolution());
-
-                // Initialize game state variables
+                // Initialize game state variables *before* potentially calling render
                 this.entities = []; this.projectiles = []; this.playerGold = 0; this.aiGold = 0;
                 this.selectedUnits = []; this.buildingToPlace = null; this.unitToTrain = null; // unitToTrain not really used now
                 this.mousePos = { x: 0, y: 0 }; this.isDragging = false; this.dragStartPos = { x: 0, y: 0 };
                 this.gameOver = true; // Start as game over until reset
                 this.winner = null; this.aiTimer = null; this.lastTimestamp = 0; this.gameLoopRequestId = null;
+
+                // Set canvas resolution and handle resizing
+                this.setCanvasResolution();
+                window.addEventListener('resize', () => this.setCanvasResolution());
 
                 // Attach input event listeners
                 this.attachInputHandlers();
@@ -402,8 +402,8 @@
             setCanvasResolution() {
                 this.canvas.width = CONFIG.CANVAS_WIDTH; this.canvas.height = CONFIG.CANVAS_HEIGHT;
                 console.log(`Canvas internal resolution set to: ${this.canvas.width}x${this.canvas.height}`);
-                // Re-render immediately after resize if game is running
-                if (this.ctx && !this.gameOver) { this.render(); }
+                // REMOVED: Immediate render call to prevent error before entities are initialized
+                // if (this.ctx && !this.gameOver) { this.render(); }
             }
 
             // Reset the game to its initial state
@@ -414,7 +414,8 @@
                 if (this.aiTimer) clearInterval(this.aiTimer);
 
                 // Clear game objects and reset state
-                this.entities = []; this.projectiles = []; this.playerGold = CONFIG.STARTING_GOLD; this.aiGold = CONFIG.AI_STARTING_GOLD;
+                this.entities = []; // Ensure entities is initialized here
+                this.projectiles = []; this.playerGold = CONFIG.STARTING_GOLD; this.aiGold = CONFIG.AI_STARTING_GOLD;
                 this.selectedUnits = []; this.buildingToPlace = null; this.unitToTrain = null;
                 this.gameOver = false; // Game is now active
                 this.winner = null; this.hideMessage(); this.updateResourceDisplay(); this.clearButtonSelections();
