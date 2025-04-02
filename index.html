@@ -42,7 +42,7 @@
 
         console.log("Script execution started.");
 
-        // --- Game Configuration ---
+        // --- Game Configuration --- (Base color fix included)
         const CONFIG = {
             CANVAS_WIDTH: 800, CANVAS_HEIGHT: 500, UNIT_SIZE: 10, BUILDING_BASE_SIZE: 30,
             UNIT_COLORS: { player: { Worker: 'blue', Soldier: 'dodgerblue', Archer: 'darkblue' }, ai: { Worker: 'red', Soldier: 'orangered', Archer: 'maroon' } },
@@ -61,12 +61,7 @@
             },
             BUILDING_PLACEMENT_DISTANCE: 2, UNIT_SEPARATION_DISTANCE: 5,
             AI_BASE_INTERVALS: { train: 8000 }, AI_ACTION_PROBABILITY: { build_check: 0.15, attack_check: 0.25 },
-            // REMOVED gold_bonus, AI starting gold now set in resetGame/loadGame based on difficulty
-            AI_DIFFICULTY_MODIFIERS: {
-                Easy:   { interval_multiplier: 1.5, /* gold_bonus: 0, */ attack_units_min: 3, prob_multiplier: 0.7 },
-                Normal: { interval_multiplier: 1.0, /* gold_bonus: 0, */ attack_units_min: 5, prob_multiplier: 1.0 },
-                Hard:   { interval_multiplier: 0.7, /* gold_bonus: 50,*/ attack_units_min: 8, prob_multiplier: 1.3 }
-            },
+            AI_DIFFICULTY_MODIFIERS: { Easy: { interval_multiplier: 1.5, attack_units_min: 3, prob_multiplier: 0.7 }, Normal: { interval_multiplier: 1.0, attack_units_min: 5, prob_multiplier: 1.0 }, Hard: { interval_multiplier: 0.7, attack_units_min: 8, prob_multiplier: 1.3 } }, // Removed gold_bonus
             ATTACK_INTERVAL: 1000, PROJECTILE_SPEED: 5, PROJECTILE_COLOR: 'black', PROJECTILE_SIZE: 3,
             GAME_SPEED: 16
         };
@@ -107,36 +102,25 @@
             attachInputHandlers() { this.canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e)); this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e)); this.canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e)); this.canvas.addEventListener('contextmenu', (e) => e.preventDefault()); }
             setCanvasResolution() { this.canvas.width = CONFIG.CANVAS_WIDTH; this.canvas.height = CONFIG.CANVAS_HEIGHT; }
 
-            // --- MODIFIED resetGame to set AI gold based on difficulty ---
+            // resetGame includes difficulty setup and logging for AI timer
             resetGame() {
                 console.log("Resetting game state...");
                 if (this.gameLoopRequestId) cancelAnimationFrame(this.gameLoopRequestId);
                 if (this.aiTimer) { console.log(`DEBUG: Clearing existing AI timer ID: ${this.aiTimer}`); clearInterval(this.aiTimer); this.aiTimer = null; }
 
-                // Reset core state
                 this.entities = []; this.projectiles = []; this.playerGold = CONFIG.STARTING_GOLD;
                 this.selectedUnits = []; this.buildingToPlace = null; this.unitToTrain = null; this.isDraggingWall = false; this.wallDragStartPos = null; this.gameOver = false; this.winner = null;
 
-                // --- Set AI starting gold based on difficulty ---
+                // Set AI starting gold based on difficulty
                 const basePlayerGold = CONFIG.STARTING_GOLD;
                 switch (this.difficulty) {
-                    case 'Easy':
-                        this.aiGold = basePlayerGold; // 100%
-                        break;
-                    case 'Hard':
-                        this.aiGold = basePlayerGold * 2; // 200%
-                        break;
-                    case 'Normal':
-                    default:
-                        this.aiGold = Math.floor(basePlayerGold * 1.5); // 150%
-                        break;
+                    case 'Easy':   this.aiGold = basePlayerGold; break; // 100%
+                    case 'Hard':   this.aiGold = basePlayerGold * 2; break; // 200%
+                    case 'Normal': default: this.aiGold = Math.floor(basePlayerGold * 1.5); break; // 150%
                 }
-                console.log(`DEBUG: AI Gold Initialized for ${this.difficulty}. Player: ${this.playerGold}, AI: ${this.aiGold}`); // Log result
+                console.log(`DEBUG: AI Gold Initialized for ${this.difficulty}. Player: ${this.playerGold}, AI: ${this.aiGold}`);
 
-                // Update UI
                 this.hideMessage(); this.updateResourceDisplay(); this.clearButtonSelections(); this.updateDifficultyButtons();
-
-                // Create starting entities
                 try {
                     console.log("DEBUG: Creating Base buildings...");
                     const playerBaseX = 50; const playerBaseY = CONFIG.CANVAS_HEIGHT / 2 - CONFIG.BUILDING_STATS.Base.size / 2;
@@ -145,11 +129,10 @@
                     this.entities.push(new Building(aiBaseX, aiBaseY, 'ai', 'Base'));
                     console.log("DEBUG: Creating initial Workers via tryTrainUnit...");
                     this.tryTrainUnit('Worker', 'player'); this.tryTrainUnit('Worker', 'player');
-                    this.tryTrainUnit('Worker', 'ai'); this.tryTrainUnit('Worker', 'ai'); // AI workers should now have gold
+                    this.tryTrainUnit('Worker', 'ai'); this.tryTrainUnit('Worker', 'ai');
                     console.log(`DEBUG: Initial entities created: ${this.entities.length}`);
                 } catch (error) { console.error("Error creating initial entities:", error); this.showMessage("Error initializing game state!", 5000, true); this.gameOver = true; return; }
 
-                // Setup AI Timer
                 const difficultyMods = CONFIG.AI_DIFFICULTY_MODIFIERS[this.difficulty] || CONFIG.AI_DIFFICULTY_MODIFIERS['Normal'];
                 const aiInterval = (CONFIG.AI_BASE_INTERVALS.train * difficultyMods.interval_multiplier);
                 console.log(`DEBUG: Calculated AI interval: ${aiInterval}`);
@@ -157,11 +140,8 @@
                      console.log("DEBUG: Setting up AI timer...");
                      this.aiTimer = setInterval(() => this.runAI(), aiInterval);
                      console.log(`AI Timer SET with ID: ${this.aiTimer}, Interval: ${aiInterval.toFixed(0)}ms for ${this.difficulty} difficulty`);
-                } else {
-                    console.error(`AI Timer setup FAILED: Invalid interval calculated (${aiInterval})`);
-                }
+                } else { console.error(`AI Timer setup FAILED: Invalid interval calculated (${aiInterval})`); }
 
-                // Start game loop
                 this.lastTimestamp = performance.now();
                 this.gameLoopRequestId = requestAnimationFrame((timestamp) => this.gameLoop(timestamp));
                 console.log("Game reset complete, loop started.");
@@ -217,7 +197,7 @@
                  if (owner === 'player') { this.clearButtonSelections(); }
             }
 
-            // runAI includes logging and fixed placement (remains the same)
+            // --- MODIFIED runAI to use corrected fixed placement offset ---
             runAI() {
                  if (this.gameOver) return;
                  const difficultyMods = CONFIG.AI_DIFFICULTY_MODIFIERS[this.difficulty] || CONFIG.AI_DIFFICULTY_MODIFIERS['Normal'];
@@ -229,7 +209,10 @@
                     const mineCost = CONFIG.BUILDING_STATS.Mine.cost; const barracksCost = CONFIG.BUILDING_STATS.Barracks.cost; const shouldBuildMine = aiMines.length === 0 && this.aiGold >= mineCost; const shouldBuildBarracks = !aiBarracks && this.aiGold >= barracksCost; const buildType = shouldBuildMine ? 'Mine' : (shouldBuildBarracks ? 'Barracks' : null);
                     if (buildType && aiBase) {
                         let placed = false; const baseCenter = aiBase.getCenter(); const stats = CONFIG.BUILDING_STATS[buildType]; const cost = stats.cost; let buildCenterX, buildCenterY; const offset = 80;
-                        if (buildType === 'Mine') { buildCenterX = baseCenter.x + offset; buildCenterY = baseCenter.y - offset; } else { buildCenterX = baseCenter.x + offset; buildCenterY = baseCenter.y + offset; }
+                        // *** FIXED OFFSET: Use negative X offset to place left of base ***
+                        if (buildType === 'Mine') { buildCenterX = baseCenter.x - offset; buildCenterY = baseCenter.y - offset; }
+                        else { buildCenterX = baseCenter.x - offset; buildCenterY = baseCenter.y + offset; } // Barracks
+
                         console.log(`AI: Attempting fixed placement for ${buildType} near (${buildCenterX.toFixed(0)}, ${buildCenterY.toFixed(0)})`);
                         if (this.canPlaceBuilding(buildType, buildCenterX, buildCenterY)) {
                             console.log(`AI: Placement valid for ${buildType}. Spending ${cost}G...`);
@@ -258,43 +241,7 @@
             hideMessage() { if (this.messageBox) { this.messageBox.style.display = 'none'; } }
             // saveGame, loadGame include difficulty (remain the same)
             saveGame() { if (this.gameOver && this.winner) { this.showMessage("Cannot save finished game", 1500); return; } try { const entityData = this.entities.map(e => { if (!e || !e.type || !e.owner) return null; return { type: e.type, owner: e.owner, x: e.x, y: e.y, hp: e.hp, state: e.state, }; }).filter(e => e !== null); const saveData = { playerGold: this.playerGold, aiGold: this.aiGold, entities: entityData, difficulty: this.difficulty, timestamp: Date.now() }; localStorage.setItem('stickFigureBattleSave', JSON.stringify(saveData)); this.showMessage("Game Saved!", 1500); } catch (error) { console.error("Error saving game:", error); this.showMessage("Error saving game!", 1500); } }
-            // --- MODIFIED loadGame fallback for AI Gold ---
-            loadGame() {
-                try {
-                    const savedData = localStorage.getItem('stickFigureBattleSave');
-                    if (savedData) {
-                        const parsedData = JSON.parse(savedData);
-                        if (this.gameLoopRequestId) cancelAnimationFrame(this.gameLoopRequestId);
-                        if (this.aiTimer) { console.log(`DEBUG: Clearing existing AI timer ID: ${this.aiTimer} before load.`); clearInterval(this.aiTimer); this.aiTimer = null; }
-                        this.gameOver = true;
-                        this.playerGold = parsedData.playerGold ?? CONFIG.STARTING_GOLD;
-                        this.difficulty = parsedData.difficulty || 'Normal'; // Load difficulty
-
-                        // --- Calculate AI starting gold based on loaded difficulty if missing from save ---
-                        if (parsedData.aiGold === undefined || isNaN(parsedData.aiGold)) {
-                            console.warn("AI Gold missing or invalid in save data, calculating based on difficulty.");
-                            const basePlayerGold = CONFIG.STARTING_GOLD;
-                            switch (this.difficulty) {
-                                case 'Easy': this.aiGold = basePlayerGold; break;
-                                case 'Hard': this.aiGold = basePlayerGold * 2; break;
-                                case 'Normal': default: this.aiGold = Math.floor(basePlayerGold * 1.5); break;
-                            }
-                        } else {
-                            this.aiGold = parsedData.aiGold; // Use saved AI gold if valid
-                        }
-                        console.log(`DEBUG: AI Gold Loaded/Calculated for ${this.difficulty}. AI: ${this.aiGold}`);
-
-                        this.entities = []; this.projectiles = []; this.selectedUnits = []; this.buildingToPlace = null; this.unitToTrain = null; this.isDraggingWall = false; this.wallDragStartPos = null;
-                        if (parsedData.entities && Array.isArray(parsedData.entities)) { parsedData.entities.forEach(savedEntity => { if (!savedEntity || !savedEntity.type) return; let entity = null; try { if (CONFIG.UNIT_STATS[savedEntity.type]) { entity = new Unit(savedEntity.x, savedEntity.y, savedEntity.owner, savedEntity.type); entity.state = savedEntity.state || 'idle'; } else if (CONFIG.BUILDING_STATS[savedEntity.type]) { entity = new Building(savedEntity.x, savedEntity.y, savedEntity.owner, savedEntity.type); } if (entity) { entity.hp = savedEntity.hp ?? 1; this.entities.push(entity); } } catch (err) { console.error("Error creating entity during load:", savedEntity, err); } }); } else { console.warn("No valid entity data found in save file."); }
-                        this.updateResourceDisplay(); this.clearButtonSelections(); this.updateDifficultyButtons(); this.hideMessage(); this.gameOver = false;
-                        const difficultyMods = CONFIG.AI_DIFFICULTY_MODIFIERS[this.difficulty] || CONFIG.AI_DIFFICULTY_MODIFIERS['Normal'];
-                        const aiInterval = (CONFIG.AI_BASE_INTERVALS.train * difficultyMods.interval_multiplier);
-                        console.log(`DEBUG: Setting up AI timer on load. Interval: ${aiInterval}`);
-                        if(aiInterval && aiInterval > 0 && isFinite(aiInterval)) { this.aiTimer = setInterval(() => this.runAI(), aiInterval); console.log(`AI Timer SET with ID: ${this.aiTimer}, Interval: ${aiInterval.toFixed(0)}ms for loaded ${this.difficulty} difficulty`); } else { console.error(`AI Timer setup FAILED on load: Invalid interval calculated (${aiInterval})`); }
-                        this.lastTimestamp = performance.now(); this.gameLoopRequestId = requestAnimationFrame((ts) => this.gameLoop(ts)); this.showMessage("Game Loaded!", 1500);
-                    } else { this.showMessage("No save data found.", 1500); }
-                 } catch (error) { console.error("Error loading game:", error); this.showMessage("Error loading game! Resetting.", 2500); this.resetGame(); }
-             }
+            loadGame() { try { const savedData = localStorage.getItem('stickFigureBattleSave'); if (savedData) { const parsedData = JSON.parse(savedData); if (this.gameLoopRequestId) cancelAnimationFrame(this.gameLoopRequestId); if (this.aiTimer) { console.log(`DEBUG: Clearing existing AI timer ID: ${this.aiTimer} before load.`); clearInterval(this.aiTimer); this.aiTimer = null; } this.gameOver = true; this.playerGold = parsedData.playerGold ?? CONFIG.STARTING_GOLD; this.difficulty = parsedData.difficulty || 'Normal'; if (parsedData.aiGold === undefined || isNaN(parsedData.aiGold)) { console.warn("AI Gold missing or invalid in save data, calculating based on difficulty."); const basePlayerGold = CONFIG.STARTING_GOLD; switch (this.difficulty) { case 'Easy': this.aiGold = basePlayerGold; break; case 'Hard': this.aiGold = basePlayerGold * 2; break; case 'Normal': default: this.aiGold = Math.floor(basePlayerGold * 1.5); break; } } else { this.aiGold = parsedData.aiGold; } console.log(`DEBUG: AI Gold Loaded/Calculated for ${this.difficulty}. AI: ${this.aiGold}`); this.entities = []; this.projectiles = []; this.selectedUnits = []; this.buildingToPlace = null; this.unitToTrain = null; this.isDraggingWall = false; this.wallDragStartPos = null; if (parsedData.entities && Array.isArray(parsedData.entities)) { parsedData.entities.forEach(savedEntity => { if (!savedEntity || !savedEntity.type) return; let entity = null; try { if (CONFIG.UNIT_STATS[savedEntity.type]) { entity = new Unit(savedEntity.x, savedEntity.y, savedEntity.owner, savedEntity.type); entity.state = savedEntity.state || 'idle'; } else if (CONFIG.BUILDING_STATS[savedEntity.type]) { entity = new Building(savedEntity.x, savedEntity.y, savedEntity.owner, savedEntity.type); } if (entity) { entity.hp = savedEntity.hp ?? 1; this.entities.push(entity); } } catch (err) { console.error("Error creating entity during load:", savedEntity, err); } }); } else { console.warn("No valid entity data found in save file."); } this.updateResourceDisplay(); this.clearButtonSelections(); this.updateDifficultyButtons(); this.hideMessage(); this.gameOver = false; const difficultyMods = CONFIG.AI_DIFFICULTY_MODIFIERS[this.difficulty] || CONFIG.AI_DIFFICULTY_MODIFIERS['Normal']; const aiInterval = (CONFIG.AI_BASE_INTERVALS.train * difficultyMods.interval_multiplier); console.log(`DEBUG: Setting up AI timer on load. Interval: ${aiInterval}`); if(aiInterval && aiInterval > 0 && isFinite(aiInterval)) { this.aiTimer = setInterval(() => this.runAI(), aiInterval); console.log(`AI Timer SET with ID: ${this.aiTimer}, Interval: ${aiInterval.toFixed(0)}ms for loaded ${this.difficulty} difficulty`); } else { console.error(`AI Timer setup FAILED on load: Invalid interval calculated (${aiInterval})`); } this.lastTimestamp = performance.now(); this.gameLoopRequestId = requestAnimationFrame((ts) => this.gameLoop(ts)); this.showMessage("Game Loaded!", 1500); } else { this.showMessage("No save data found.", 1500); } } catch (error) { console.error("Error loading game:", error); this.showMessage("Error loading game! Resetting.", 2500); this.resetGame(); } }
         }
 
         // --- Initialize Game ---
