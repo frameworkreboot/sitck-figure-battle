@@ -1,0 +1,1329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medieval Stick Figure Battle</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            background-color: #f0f0f0;
+            color: #333;
+            touch-action: none; /* Prevent default touch actions like scrolling */
+        }
+        #game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 10px;
+            border: 1px solid #ccc;
+            background-color: #fff;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            position: relative; /* Needed for absolute positioning of message box */
+            width: 95%;
+            max-width: 900px; /* Limit max width */
+        }
+        #ui-top {
+            width: 100%;
+            padding: 10px;
+            background-color: #e0e0e0;
+            border-bottom: 1px solid #ccc;
+            box-sizing: border-box;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #resource-display {
+            font-weight: bold;
+        }
+        #gameCanvas {
+            border: 1px solid #000;
+            cursor: crosshair;
+            background-color: #fafad2; /* Light Goldenrod Yellow - ground color */
+            display: block; /* Prevent extra space below canvas */
+            width: 100%; /* Make canvas responsive */
+            height: auto; /* Maintain aspect ratio */
+            max-height: 600px; /* Limit max height */
+        }
+        #ui-bottom {
+            width: 100%;
+            padding: 10px;
+            background-color: #e0e0e0;
+            border-top: 1px solid #ccc;
+            box-sizing: border-box;
+            display: flex;
+            flex-wrap: wrap; /* Allow buttons to wrap on smaller screens */
+            justify-content: center;
+            gap: 5px; /* Spacing between buttons */
+        }
+        button {
+            padding: 8px 15px;
+            cursor: pointer;
+            background-color: #a9a9a9; /* Dark Gray */
+            color: white;
+            border: 1px solid #808080;
+            border-radius: 5px;
+            font-size: 0.9em;
+            transition: background-color 0.2s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        button:hover {
+            background-color: #8c8c8c;
+        }
+        button:active {
+            background-color: #707070;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.3);
+        }
+        button.selected {
+            background-color: #6a5acd; /* Slate Blue */
+            border-color: #483d8b;
+        }
+        #message-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 10px;
+            font-size: 1.5em;
+            text-align: center;
+            z-index: 100; /* Ensure it's above the canvas */
+            display: none; /* Hidden by default */
+        }
+        #save-load button {
+             margin-left: 10px;
+             background-color: #4682b4; /* Steel Blue */
+             border-color: #4169e1;
+        }
+        #save-load button:hover {
+             background-color: #5f9ea0; /* Cadet Blue */
+        }
+    </style>
+</head>
+<body>
+    <h1>Medieval Stick Figure Battle (MVP)</h1>
+
+    <div id="game-container">
+        <div id="ui-top">
+            <div id="resource-display">Gold: 100</div>
+            <div id="save-load">
+                <button onclick="game.saveGame()">Save</button>
+                <button onclick="game.loadGame()">Load</button>
+                 <button onclick="game.resetGame()">Reset</button>
+            </div>
+        </div>
+
+        <canvas id="gameCanvas"></canvas>
+
+        <div id="ui-bottom">
+            <button id="build-worker-btn" onclick="game.selectTrainUnit('Worker')">Train Worker (10G)</button>
+            <button id="build-soldier-btn" onclick="game.selectTrainUnit('Soldier')">Train Soldier (20G)</button>
+            <button id="build-archer-btn" onclick="game.selectTrainUnit('Archer')">Train Archer (25G)</button>
+            <button id="build-wall-btn" onclick="game.selectBuild('Wall')">Build Wall (15G)</button>
+            <button id="build-tower-btn" onclick="game.selectBuild('Tower')">Build Tower (50G)</button>
+            <button id="build-barracks-btn" onclick="game.selectBuild('Barracks')">Build Barracks (75G)</button>
+            <button id="build-mine-btn" onclick="game.selectBuild('Mine')">Build Mine (40G)</button>
+        </div>
+
+        <div id="message-box">Game Over!</div>
+    </div>
+
+    <script>
+        // --- Game Configuration ---
+        const CONFIG = {
+            // Canvas & Rendering
+            CANVAS_WIDTH: 800,
+            CANVAS_HEIGHT: 500,
+            UNIT_SIZE: 10,
+            BUILDING_BASE_SIZE: 30,
+            STICK_FIGURE_COLOR_PLAYER: 'blue',
+            STICK_FIGURE_COLOR_AI: 'red',
+            BUILDING_COLOR_PLAYER: 'darkblue',
+            BUILDING_COLOR_AI: 'darkred',
+            SELECTION_COLOR: 'lime',
+            HEALTH_BAR_COLOR: 'green',
+            HEALTH_BAR_BACKGROUND: 'grey',
+            HEALTH_BAR_HEIGHT: 4,
+            BUILD_PREVIEW_COLOR: 'rgba(0, 255, 0, 0.5)', // Semi-transparent green
+
+            // Resources
+            STARTING_GOLD: 100,
+            MINE_GOLD_RATE: 1, // Gold per worker per interval
+            RESOURCE_INTERVAL: 2000, // milliseconds
+
+            // Units
+            UNIT_STATS: {
+                Worker:  { cost: 10, hp: 25, speed: 1.5, attack: 1, range: 5, type: 'worker' },
+                Soldier: { cost: 20, hp: 50, speed: 1,   attack: 5, range: 15, type: 'melee' }, // Range is engagement range
+                Archer:  { cost: 25, hp: 30, speed: 1.2, attack: 3, range: 80, type: 'ranged' }
+            },
+
+            // Buildings
+            BUILDING_STATS: {
+                // Player buildings need cost, hp, size. Some have special functions.
+                Base:    { cost: 0,   hp: 500, size: 40, color: 'darkblue', provides_workers: true }, // Player starts with a Base
+                Wall:    { cost: 15,  hp: 100, size: 20, color: 'grey' },
+                Tower:   { cost: 50,  hp: 150, size: 25, color: 'saddlebrown', attack: 4, range: 100, attack_speed: 1500 }, // Attack speed in ms
+                Barracks:{ cost: 75,  hp: 120, size: 35, color: 'olive', enables_combat_units: true },
+                Mine:    { cost: 40,  hp: 80,  size: 30, color: 'gold', is_mine: true }
+            },
+            BUILDING_PLACEMENT_DISTANCE: 5, // Min distance between buildings
+
+            // AI
+            AI_STARTING_GOLD: 100,
+            AI_BUILD_INTERVAL: 15000, // milliseconds
+            AI_TRAIN_INTERVAL: 8000, // milliseconds
+            AI_ATTACK_INTERVAL: 25000, // milliseconds
+            AI_RESOURCE_INTERVAL: 2000, // matches player
+
+            // Combat
+            ATTACK_INTERVAL: 1000, // milliseconds between attacks for units
+            PROJECTILE_SPEED: 5,
+            PROJECTILE_COLOR: 'black',
+            PROJECTILE_SIZE: 3,
+
+            // Game Loop
+            GAME_SPEED: 16 // roughly 60 FPS (1000ms / 60fps)
+        };
+
+        // --- Utility Functions ---
+        function distance(x1, y1, x2, y2) {
+            const dx = x1 - x2;
+            const dy = y1 - y2;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        function isColliding(rect1, rect2) {
+            // Simple Axis-Aligned Bounding Box (AABB) collision check
+             return (
+                rect1.x < rect2.x + rect2.width &&
+                rect1.x + rect1.width > rect2.x &&
+                rect1.y < rect2.y + rect2.height &&
+                rect1.y + rect1.height > rect2.y
+            );
+        }
+
+        // --- Game Classes ---
+
+        // Base class for all game entities (Units, Buildings, Projectiles)
+        class Entity {
+            constructor(x, y, width, height, hp, owner, id_prefix = 'e') {
+                this.id = `${id_prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+                this.maxHp = hp;
+                this.hp = hp;
+                this.owner = owner; // 'player' or 'ai'
+                this.selected = false;
+            }
+
+            draw() { /* Base draw method, override in subclasses */ }
+            update() { /* Base update method, override in subclasses */ }
+
+            getCenter() {
+                return { x: this.x + this.width / 2, y: this.y + this.height / 2 };
+            }
+
+            getBoundingBox() {
+                 return { x: this.x, y: this.y, width: this.width, height: this.height };
+            }
+
+            takeDamage(amount) {
+                this.hp -= amount;
+                if (this.hp <= 0) {
+                    this.hp = 0;
+                    // Signal for removal in the main game loop
+                    return true; // Is dead
+                }
+                return false; // Still alive
+            }
+
+            drawHealthBar(ctx) {
+                if (this.hp < this.maxHp) {
+                    const barWidth = this.width;
+                    const barX = this.x;
+                    const barY = this.y - CONFIG.HEALTH_BAR_HEIGHT - 2; // Position above the entity
+                    const hpRatio = this.hp / this.maxHp;
+
+                    ctx.fillStyle = CONFIG.HEALTH_BAR_BACKGROUND;
+                    ctx.fillRect(barX, barY, barWidth, CONFIG.HEALTH_BAR_HEIGHT);
+                    ctx.fillStyle = CONFIG.HEALTH_BAR_COLOR;
+                    ctx.fillRect(barX, barY, barWidth * hpRatio, CONFIG.HEALTH_BAR_HEIGHT);
+                }
+            }
+        }
+
+        class Unit extends Entity {
+            constructor(x, y, owner, type) {
+                const stats = CONFIG.UNIT_STATS[type];
+                super(x, y, CONFIG.UNIT_SIZE, CONFIG.UNIT_SIZE * 2, stats.hp, owner, type.charAt(0).toLowerCase()); // Taller stick figures
+                this.type = type;
+                this.stats = stats;
+                this.target = null; // {x, y} for movement or Entity for attack/mining
+                this.state = 'idle'; // idle, moving, attacking, mining
+                this.attackCooldown = 0;
+                this.miningCooldown = 0;
+                this.color = owner === 'player' ? CONFIG.STICK_FIGURE_COLOR_PLAYER : CONFIG.STICK_FIGURE_COLOR_AI;
+            }
+
+            setTarget(target) {
+                this.target = target;
+                if (target && typeof target.x !== 'undefined' && typeof target.y !== 'undefined') {
+                     // Check if target is an entity or a coordinate
+                    if (target instanceof Entity) {
+                        if (this.type === 'Worker' && target.is_mine && target.owner === this.owner) {
+                            this.state = 'moving_to_mine';
+                        } else if (target.owner !== this.owner) {
+                             this.state = 'moving_to_attack';
+                        } else {
+                            // Target is friendly, move towards it but don't attack/mine
+                            this.state = 'moving';
+                        }
+                    } else {
+                        // Target is a coordinate
+                        this.state = 'moving';
+                    }
+                } else {
+                    this.state = 'idle';
+                    this.target = null;
+                }
+            }
+
+            update(deltaTime, gameEntities, projectiles) {
+                const deltaSeconds = deltaTime / 1000;
+                this.attackCooldown = Math.max(0, this.attackCooldown - deltaTime);
+                this.miningCooldown = Math.max(0, this.miningCooldown - deltaTime);
+
+                // --- State Machine ---
+                switch (this.state) {
+                    case 'idle':
+                        // Maybe look for enemies nearby if not a worker?
+                         if (this.type !== 'Worker') {
+                            this.findTarget(gameEntities);
+                         }
+                        break;
+                    case 'moving':
+                        this.moveTowards(this.target.x, this.target.y, deltaSeconds);
+                        // Stop if reached destination
+                        if (distance(this.x, this.y, this.target.x, this.target.y) < this.stats.speed) {
+                            this.state = 'idle';
+                            this.target = null;
+                        }
+                        break;
+                     case 'moving_to_mine':
+                        if (!this.target || this.target.hp <= 0 || !this.target.is_mine) {
+                             this.state = 'idle'; this.target = null; break;
+                        }
+                        const mineCenter = this.target.getCenter();
+                        if (distance(this.x, this.y, mineCenter.x, mineCenter.y) < this.target.width / 2 + this.width) {
+                             this.state = 'mining';
+                        } else {
+                            this.moveTowards(mineCenter.x, mineCenter.y, deltaSeconds);
+                        }
+                         break;
+                    case 'mining':
+                        if (!this.target || this.target.hp <= 0 || !this.target.is_mine) {
+                            this.state = 'idle'; this.target = null; break;
+                        }
+                        if (this.miningCooldown <= 0) {
+                            game.addGold(CONFIG.MINE_GOLD_RATE, this.owner); // Add gold to the owner
+                            this.miningCooldown = CONFIG.RESOURCE_INTERVAL; // Reset cooldown
+                            // Simple visual feedback (could add animation later)
+                            console.log(`${this.owner} ${this.type} ${this.id} mined gold!`);
+                        }
+                        break;
+                    case 'moving_to_attack':
+                         if (!this.target || this.target.hp <= 0 || this.target.owner === this.owner) {
+                            this.state = 'idle'; this.target = null;
+                            this.findTarget(gameEntities); // Look for a new target
+                            break;
+                         }
+                         const targetCenter = this.target.getCenter();
+                         const distToTarget = distance(this.getCenter().x, this.getCenter().y, targetCenter.x, targetCenter.y);
+
+                         if (distToTarget <= this.stats.range) {
+                             this.state = 'attacking';
+                         } else {
+                             this.moveTowards(targetCenter.x, targetCenter.y, deltaSeconds);
+                         }
+                         break;
+                    case 'attacking':
+                        if (!this.target || this.target.hp <= 0 || this.target.owner === this.owner) {
+                            this.state = 'idle'; this.target = null;
+                            this.findTarget(gameEntities); // Look for a new target
+                            break;
+                        }
+                        // Check range again in case target moved
+                        const targetCenterAttack = this.target.getCenter();
+                        const distToTargetAttack = distance(this.getCenter().x, this.getCenter().y, targetCenterAttack.x, targetCenterAttack.y);
+
+                        if (distToTargetAttack > this.stats.range) {
+                             this.state = 'moving_to_attack'; // Chase target
+                             break;
+                        }
+
+                        if (this.attackCooldown <= 0) {
+                            this.performAttack(projectiles);
+                            this.attackCooldown = CONFIG.ATTACK_INTERVAL;
+                        }
+                        break;
+                }
+            }
+
+             findTarget(entities) {
+                let closestEnemy = null;
+                let minDistance = Infinity;
+
+                entities.forEach(entity => {
+                    if (entity.owner !== this.owner && entity.hp > 0 && (entity instanceof Unit || entity instanceof Building)) {
+                        const d = distance(this.getCenter().x, this.getCenter().y, entity.getCenter().x, entity.getCenter().y);
+                        if (d < minDistance && d < this.stats.range * 2) { // Look within double range
+                             minDistance = d;
+                             closestEnemy = entity;
+                        }
+                    }
+                });
+
+                if (closestEnemy) {
+                     this.setTarget(closestEnemy);
+                }
+             }
+
+
+            moveTowards(targetX, targetY, deltaSeconds) {
+                const moveSpeed = this.stats.speed;
+                const center = this.getCenter();
+                const dx = targetX - center.x;
+                const dy = targetY - center.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist > moveSpeed) {
+                    const moveX = (dx / dist) * moveSpeed;
+                    const moveY = (dy / dist) * moveSpeed;
+
+                    // Basic collision avoidance (very simple: stop if blocked) - NEEDS IMPROVEMENT
+                    const nextX = this.x + moveX;
+                    const nextY = this.y + moveY;
+                    let blocked = false;
+                    /* // Basic collision avoidance - can cause units to get stuck
+                    game.entities.forEach(e => {
+                        if (e !== this && e instanceof Building) { // Only check buildings for now
+                           const futureBox = { x: nextX, y: nextY, width: this.width, height: this.height };
+                           if (isColliding(futureBox, e.getBoundingBox())) {
+                               blocked = true;
+                           }
+                        }
+                    }); */
+
+                    if (!blocked) {
+                         this.x = nextX;
+                         this.y = nextY;
+                    } else {
+                        // If blocked, maybe try slight adjustments or just stop
+                        this.state = 'idle';
+                        this.target = null;
+                    }
+
+
+                } else {
+                    // Close enough, snap to position (or stop slightly before)
+                    // This part is handled in the state machine when checking distance
+                }
+                 // Keep units within canvas bounds
+                 this.x = Math.max(0, Math.min(CONFIG.CANVAS_WIDTH - this.width, this.x));
+                 this.y = Math.max(0, Math.min(CONFIG.CANVAS_HEIGHT - this.height, this.y));
+            }
+
+            performAttack(projectiles) {
+                console.log(`${this.owner} ${this.type} ${this.id} attacking ${this.target.id}`);
+                 if (this.stats.type === 'ranged') {
+                     // Create a projectile
+                     const startPos = this.getCenter();
+                     const targetPos = this.target.getCenter();
+                     projectiles.push(new Projectile(startPos.x, startPos.y, targetPos.x, targetPos.y, this.stats.attack, this.owner, this.target));
+                 } else {
+                     // Melee attack - direct damage
+                     const isDead = this.target.takeDamage(this.stats.attack);
+                     if (isDead) {
+                         this.state = 'idle';
+                         this.target = null;
+                     }
+                 }
+            }
+
+            draw(ctx) {
+                // Body
+                ctx.strokeStyle = this.color;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                const headRadius = this.width / 2;
+                const bodyTopY = this.y + headRadius * 2;
+                const bodyBottomY = this.y + this.height * 0.8;
+                const neckY = this.y + headRadius;
+
+                // Head
+                ctx.arc(this.x + headRadius, neckY, headRadius, 0, Math.PI * 2);
+                // Body
+                ctx.moveTo(this.x + headRadius, bodyTopY);
+                ctx.lineTo(this.x + headRadius, bodyBottomY);
+                // Legs
+                ctx.moveTo(this.x + headRadius, bodyBottomY);
+                ctx.lineTo(this.x, this.y + this.height);
+                ctx.moveTo(this.x + headRadius, bodyBottomY);
+                ctx.lineTo(this.x + this.width, this.y + this.height);
+                // Arms
+                const armY = this.y + this.height * 0.5;
+                ctx.moveTo(this.x, armY);
+                ctx.lineTo(this.x + this.width, armY);
+                ctx.stroke();
+
+                // Draw health bar
+                this.drawHealthBar(ctx);
+
+                // Selection highlight
+                if (this.selected) {
+                    ctx.strokeStyle = CONFIG.SELECTION_COLOR;
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(this.x - 2, this.y - 2, this.width + 4, this.height + 4);
+                }
+
+                 // Draw target line if moving
+                 if ((this.state === 'moving' || this.state === 'moving_to_attack' || this.state === 'moving_to_mine') && this.target) {
+                     ctx.strokeStyle = 'rgba(128, 128, 128, 0.5)'; // Light grey, semi-transparent
+                     ctx.lineWidth = 1;
+                     ctx.beginPath();
+                     ctx.moveTo(this.getCenter().x, this.getCenter().y);
+                     if (this.target instanceof Entity) {
+                        ctx.lineTo(this.target.getCenter().x, this.target.getCenter().y);
+                     } else {
+                        ctx.lineTo(this.target.x, this.target.y);
+                     }
+                     ctx.stroke();
+                 }
+            }
+        }
+
+        class Building extends Entity {
+            constructor(x, y, owner, type) {
+                const stats = CONFIG.BUILDING_STATS[type];
+                super(x, y, stats.size, stats.size, stats.hp, owner, type.charAt(0).toLowerCase());
+                this.type = type;
+                this.stats = stats;
+                this.color = stats.color || (owner === 'player' ? CONFIG.BUILDING_COLOR_PLAYER : CONFIG.BUILDING_COLOR_AI);
+                this.is_mine = stats.is_mine || false;
+                this.provides_workers = stats.provides_workers || false;
+                this.enables_combat_units = stats.enables_combat_units || false;
+                this.attackCooldown = 0; // For towers
+            }
+
+             update(deltaTime, gameEntities, projectiles) {
+                 // Tower attack logic
+                 if (this.type === 'Tower' && this.hp > 0) {
+                     this.attackCooldown = Math.max(0, this.attackCooldown - deltaTime);
+
+                     if (this.attackCooldown <= 0) {
+                         let target = null;
+                         let minDist = this.stats.range;
+
+                         gameEntities.forEach(entity => {
+                             if (entity instanceof Unit && entity.owner !== this.owner && entity.hp > 0) {
+                                 const d = distance(this.getCenter().x, this.getCenter().y, entity.getCenter().x, entity.getCenter().y);
+                                 if (d < minDist) {
+                                     minDist = d;
+                                     target = entity;
+                                 }
+                             }
+                         });
+
+                         if (target) {
+                             console.log(`Tower ${this.id} firing at ${target.id}`);
+                             const startPos = this.getCenter();
+                             const targetPos = target.getCenter();
+                             projectiles.push(new Projectile(startPos.x, startPos.y, targetPos.x, targetPos.y, this.stats.attack, this.owner, target));
+                             this.attackCooldown = this.stats.attack_speed;
+                         }
+                     }
+                 }
+             }
+
+            draw(ctx) {
+                ctx.fillStyle = this.color;
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 1;
+
+                // Simple rectangular building
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                ctx.strokeRect(this.x, this.y, this.width, this.height);
+
+                // Add simple details based on type
+                ctx.fillStyle = 'white';
+                ctx.font = '10px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                let symbol = '?';
+                switch(this.type) {
+                    case 'Base': symbol = 'B'; break;
+                    case 'Wall': symbol = ''; break; // No symbol for walls
+                    case 'Tower': symbol = 'T'; break;
+                    case 'Barracks': symbol = 'R'; break;
+                    case 'Mine': symbol = 'M'; break;
+                }
+                 if (symbol) {
+                    ctx.fillText(symbol, this.x + this.width / 2, this.y + this.height / 2);
+                 }
+
+
+                // Draw health bar
+                this.drawHealthBar(ctx);
+
+                 // Selection highlight
+                if (this.selected) {
+                    ctx.strokeStyle = CONFIG.SELECTION_COLOR;
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(this.x - 2, this.y - 2, this.width + 4, this.height + 4);
+                }
+            }
+        }
+
+        class Projectile extends Entity {
+             constructor(startX, startY, targetX, targetY, damage, owner, targetEntity) {
+                super(startX, startY, CONFIG.PROJECTILE_SIZE, CONFIG.PROJECTILE_SIZE, 1, owner, 'p'); // Projectiles don't really have HP
+                this.damage = damage;
+                this.targetX = targetX;
+                this.targetY = targetY;
+                this.targetEntity = targetEntity; // Store reference to target
+
+                 const dx = targetX - startX;
+                 const dy = targetY - startY;
+                 const dist = Math.sqrt(dx * dx + dy * dy);
+                 this.velocityX = (dx / dist) * CONFIG.PROJECTILE_SPEED;
+                 this.velocityY = (dy / dist) * CONFIG.PROJECTILE_SPEED;
+                 this.color = CONFIG.PROJECTILE_COLOR;
+             }
+
+             update(deltaTime, gameEntities, projectiles) {
+                 this.x += this.velocityX;
+                 this.y += this.velocityY;
+
+                 // Check collision with target entity
+                 if (this.targetEntity && this.targetEntity.hp > 0) {
+                     if (isColliding(this.getBoundingBox(), this.targetEntity.getBoundingBox())) {
+                         this.targetEntity.takeDamage(this.damage);
+                         this.hp = 0; // Mark projectile for removal
+                         return; // Stop processing after hit
+                     }
+                 } else {
+                    // Target died or disappeared mid-flight, just continue
+                 }
+
+
+                 // Check if out of bounds or traveled too far (simple cleanup)
+                 if (this.x < 0 || this.x > CONFIG.CANVAS_WIDTH || this.y < 0 || this.y > CONFIG.CANVAS_HEIGHT) {
+                     this.hp = 0; // Mark for removal
+                 }
+
+                 // Alternative: Check distance traveled (might be better)
+                 // const distTraveled = distance(this.startX, this.startY, this.x, this.y); // Need startX/Y stored
+                 // if (distTraveled > maxRange) { this.hp = 0; }
+             }
+
+             draw(ctx) {
+                 ctx.fillStyle = this.color;
+                 ctx.beginPath();
+                 ctx.arc(this.x, this.y, this.width, 0, Math.PI * 2);
+                 ctx.fill();
+             }
+        }
+
+
+        // --- Main Game Class ---
+        class Game {
+            constructor(canvasId) {
+                this.canvas = document.getElementById(canvasId);
+                this.ctx = this.canvas.getContext('2d');
+                this.resourceDisplay = document.getElementById('resource-display');
+                this.messageBox = document.getElementById('message-box');
+                this.buildButtons = {
+                    Wall: document.getElementById('build-wall-btn'),
+                    Tower: document.getElementById('build-tower-btn'),
+                    Barracks: document.getElementById('build-barracks-btn'),
+                    Mine: document.getElementById('build-mine-btn'),
+                };
+                 this.trainButtons = {
+                    Worker: document.getElementById('build-worker-btn'),
+                    Soldier: document.getElementById('build-soldier-btn'),
+                    Archer: document.getElementById('build-archer-btn'),
+                };
+
+                this.resizeCanvas(); // Initial size setup
+                window.addEventListener('resize', () => this.resizeCanvas()); // Adjust on resize
+
+                this.resetGame(); // Initialize game state
+
+                // Input handling
+                this.selectedUnits = [];
+                this.buildingToPlace = null; // Type of building selected
+                this.unitToTrain = null; // Type of unit selected
+                this.mousePos = { x: 0, y: 0 };
+                this.isDragging = false;
+                this.dragStartPos = { x: 0, y: 0 };
+
+                this.canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+                this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+                this.canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e));
+                this.canvas.addEventListener('contextmenu', (e) => e.preventDefault()); // Prevent right-click menu
+
+                // Timers
+                this.resourceTimer = null;
+                this.aiTimer = null;
+                this.lastTimestamp = 0;
+                this.gameLoop = this.gameLoop.bind(this); // Bind 'this' for requestAnimationFrame
+            }
+
+            resizeCanvas() {
+                // Make internal canvas resolution match its display size
+                const rect = this.canvas.getBoundingClientRect();
+                this.canvas.width = rect.width;
+                this.canvas.height = rect.height;
+                 // Update CONFIG if needed, or adjust drawing logic based on current canvas size
+                 // For simplicity, we'll keep CONFIG fixed and let things scale visually.
+                 // A more robust solution would scale coordinates.
+                 console.log(`Canvas resized to: ${this.canvas.width}x${this.canvas.height}`);
+            }
+
+
+            resetGame() {
+                console.log("Resetting game...");
+                this.entities = []; // All units and buildings
+                this.projectiles = [];
+                this.playerGold = CONFIG.STARTING_GOLD;
+                this.aiGold = CONFIG.AI_STARTING_GOLD;
+                this.selectedUnits = [];
+                this.buildingToPlace = null;
+                this.unitToTrain = null;
+                this.gameOver = false;
+                this.winner = null;
+                this.hideMessage();
+                this.updateResourceDisplay();
+                this.clearButtonSelections();
+
+                // Add starting bases
+                const playerBaseX = 50;
+                const playerBaseY = CONFIG.CANVAS_HEIGHT / 2 - CONFIG.BUILDING_STATS.Base.size / 2;
+                this.entities.push(new Building(playerBaseX, playerBaseY, 'player', 'Base'));
+
+                const aiBaseX = CONFIG.CANVAS_WIDTH - 50 - CONFIG.BUILDING_STATS.Base.size;
+                const aiBaseY = CONFIG.CANVAS_HEIGHT / 2 - CONFIG.BUILDING_STATS.Base.size / 2;
+                this.entities.push(new Building(aiBaseX, aiBaseY, 'ai', 'Base'));
+
+                 // Add starting workers near bases
+                 this.entities.push(new Unit(playerBaseX + 50, playerBaseY + 10, 'player', 'Worker'));
+                 this.entities.push(new Unit(playerBaseX + 50, playerBaseY + 30, 'player', 'Worker'));
+                 this.entities.push(new Unit(aiBaseX - 50, aiBaseY + 10, 'ai', 'Worker'));
+                 this.entities.push(new Unit(aiBaseX - 50, aiBaseY + 30, 'ai', 'Worker'));
+
+
+                // Start timers
+                if (this.resourceTimer) clearInterval(this.resourceTimer);
+                // Resource generation handled in unit update now
+                // this.resourceTimer = setInterval(() => this.updateResources(), CONFIG.RESOURCE_INTERVAL);
+
+                if (this.aiTimer) clearInterval(this.aiTimer);
+                this.aiTimer = setInterval(() => this.runAI(), CONFIG.AI_TRAIN_INTERVAL); // Use train interval as base AI tick
+
+                // Start the game loop
+                this.lastTimestamp = 0; // Reset timestamp for smooth start
+                requestAnimationFrame(this.gameLoop);
+            }
+
+            // --- Input Handling ---
+
+            getMousePos(event) {
+                const rect = this.canvas.getBoundingClientRect();
+                // Scale mouse coordinates to match canvas internal resolution
+                const scaleX = this.canvas.width / rect.width;
+                const scaleY = this.canvas.height / rect.height;
+                return {
+                    x: (event.clientX - rect.left) * scaleX,
+                    y: (event.clientY - rect.top) * scaleY
+                };
+            }
+
+            handleMouseDown(event) {
+                 if (this.gameOver) return;
+                 this.mousePos = this.getMousePos(event);
+
+                 if (event.button === 0) { // Left click
+                     this.isDragging = true;
+                     this.dragStartPos = { ...this.mousePos };
+
+                     // If placing a building, try to place it
+                     if (this.buildingToPlace) {
+                         this.tryPlaceBuilding(this.mousePos.x, this.mousePos.y);
+                         this.buildingToPlace = null; // Deselect building mode after click
+                         this.clearButtonSelections();
+                     } else if (this.unitToTrain) {
+                        this.tryTrainUnit(this.unitToTrain);
+                        this.unitToTrain = null; // Deselect train mode
+                        this.clearButtonSelections();
+                     } else {
+                         // Normal selection (handled on mouse up unless dragging)
+                     }
+                 } else if (event.button === 2) { // Right click
+                     // Command selected units
+                     if (this.selectedUnits.length > 0) {
+                         // Find target entity or set move target
+                         let targetEntity = null;
+                         for (const entity of this.entities) {
+                             const bb = entity.getBoundingBox();
+                             if (this.mousePos.x >= bb.x && this.mousePos.x <= bb.x + bb.width &&
+                                 this.mousePos.y >= bb.y && this.mousePos.y <= bb.y + bb.height) {
+                                 targetEntity = entity;
+                                 break;
+                             }
+                         }
+
+                         this.selectedUnits.forEach(unit => {
+                             if (targetEntity) {
+                                 unit.setTarget(targetEntity); // Attack or Mine
+                             } else {
+                                 unit.setTarget({ ...this.mousePos }); // Move
+                             }
+                         });
+                     }
+                 }
+            }
+
+             handleMouseMove(event) {
+                 this.mousePos = this.getMousePos(event);
+                 // Update preview position if placing building or dragging
+             }
+
+             handleMouseUp(event) {
+                 if (this.gameOver) return;
+                 this.mousePos = this.getMousePos(event);
+
+                 if (event.button === 0) { // Left click up
+                     if (this.isDragging && !this.buildingToPlace && !this.unitToTrain) {
+                         const dragEndPos = this.mousePos;
+                         const selectionRect = {
+                             x: Math.min(this.dragStartPos.x, dragEndPos.x),
+                             y: Math.min(this.dragStartPos.y, dragEndPos.y),
+                             width: Math.abs(this.dragStartPos.x - dragEndPos.x),
+                             height: Math.abs(this.dragStartPos.y - dragEndPos.y)
+                         };
+
+                         // Deselect previous units unless Shift is held (implement later if needed)
+                         this.deselectAll();
+
+                         // Select units within the rectangle if drag was significant
+                         if (selectionRect.width > 5 || selectionRect.height > 5) {
+                             this.entities.forEach(entity => {
+                                 if (entity instanceof Unit && entity.owner === 'player') {
+                                     const unitBox = entity.getBoundingBox();
+                                     // Check if unit's box overlaps with selection rectangle
+                                     if (isColliding(unitBox, selectionRect)) {
+                                         entity.selected = true;
+                                         this.selectedUnits.push(entity);
+                                     }
+                                 }
+                             });
+                         } else {
+                             // Single click selection (if drag was small)
+                             let clickedEntity = null;
+                             for (const entity of this.entities) {
+                                 const bb = entity.getBoundingBox();
+                                 if (this.mousePos.x >= bb.x && this.mousePos.x <= bb.x + bb.width &&
+                                     this.mousePos.y >= bb.y && this.mousePos.y <= bb.y + bb.height) {
+                                     clickedEntity = entity;
+                                     break; // Select only the top-most entity
+                                 }
+                             }
+                             if (clickedEntity && clickedEntity.owner === 'player') {
+                                 clickedEntity.selected = true;
+                                 if (clickedEntity instanceof Unit) {
+                                    this.selectedUnits.push(clickedEntity);
+                                 }
+                                 // Potentially select buildings too for info/upgrades later
+                             }
+                         }
+                     }
+                     this.isDragging = false;
+                 }
+             }
+
+            deselectAll() {
+                this.entities.forEach(e => e.selected = false);
+                this.selectedUnits = [];
+            }
+
+             clearButtonSelections() {
+                 Object.values(this.buildButtons).forEach(btn => btn.classList.remove('selected'));
+                 Object.values(this.trainButtons).forEach(btn => btn.classList.remove('selected'));
+                 this.buildingToPlace = null;
+                 this.unitToTrain = null;
+             }
+
+            // --- Game Logic ---
+
+             addGold(amount, owner) {
+                 if (owner === 'player') {
+                     this.playerGold += amount;
+                 } else {
+                     this.aiGold += amount;
+                 }
+                 this.updateResourceDisplay();
+             }
+
+             spendGold(amount, owner) {
+                 if (owner === 'player') {
+                     if (this.playerGold >= amount) {
+                         this.playerGold -= amount;
+                         this.updateResourceDisplay();
+                         return true;
+                     }
+                 } else { // AI
+                     if (this.aiGold >= amount) {
+                         this.aiGold -= amount;
+                         // No need to update display for AI gold
+                         return true;
+                     }
+                 }
+                 return false;
+             }
+
+             updateResourceDisplay() {
+                 this.resourceDisplay.textContent = `Gold: ${this.playerGold}`;
+             }
+
+             selectBuild(type) {
+                 if (this.gameOver) return;
+                 this.clearButtonSelections(); // Deselect any other action
+                 this.buildingToPlace = type;
+                 if(this.buildButtons[type]) {
+                    this.buildButtons[type].classList.add('selected');
+                 }
+                 console.log(`Selected to build: ${type}`);
+             }
+
+             selectTrainUnit(type) {
+                 if (this.gameOver) return;
+                 this.clearButtonSelections(); // Deselect any other action
+                 this.unitToTrain = type;
+                  if(this.trainButtons[type]) {
+                    this.trainButtons[type].classList.add('selected');
+                  }
+                 console.log(`Selected to train: ${type}`);
+                 // Immediately try to train if a barracks/base exists
+                 this.tryTrainUnit(type);
+
+             }
+
+             canPlaceBuilding(type, x, y) {
+                 const stats = CONFIG.BUILDING_STATS[type];
+                 if (!stats) return false;
+
+                 const buildingBox = { x: x - stats.size / 2, y: y - stats.size / 2, width: stats.size, height: stats.size };
+
+                 // Check bounds
+                 if (buildingBox.x < 0 || buildingBox.x + buildingBox.width > CONFIG.CANVAS_WIDTH ||
+                     buildingBox.y < 0 || buildingBox.y + buildingBox.height > CONFIG.CANVAS_HEIGHT) {
+                     console.log("Placement failed: Out of bounds");
+                     return false;
+                 }
+
+                 // Check collision with other buildings
+                 for (const entity of this.entities) {
+                     if (entity instanceof Building) {
+                         const existingBox = entity.getBoundingBox();
+                         const dist = distance(x, y, entity.getCenter().x, entity.getCenter().y);
+                         // Check if the new building's center is too close to an existing building's center
+                         if (dist < (stats.size / 2 + entity.width / 2 + CONFIG.BUILDING_PLACEMENT_DISTANCE)) {
+                             console.log(`Placement failed: Too close to building ${entity.id}`);
+                             return false;
+                         }
+                     }
+                 }
+                 return true;
+             }
+
+             tryPlaceBuilding(mouseX, mouseY) {
+                 const type = this.buildingToPlace;
+                 if (!type) return;
+
+                 const stats = CONFIG.BUILDING_STATS[type];
+                 if (!stats) return;
+
+                 const buildX = mouseX - stats.size / 2;
+                 const buildY = mouseY - stats.size / 2;
+
+                 if (this.spendGold(stats.cost, 'player')) {
+                     if (this.canPlaceBuilding(type, mouseX, mouseY)) {
+                         console.log(`Placing ${type} at ${buildX.toFixed(1)}, ${buildY.toFixed(1)}`);
+                         this.entities.push(new Building(buildX, buildY, 'player', type));
+                     } else {
+                         console.log("Cannot place building here.");
+                         this.addGold(stats.cost, 'player'); // Refund
+                         this.showMessage("Cannot build here!", 1000);
+                     }
+                 } else {
+                     console.log("Not enough gold.");
+                     this.showMessage("Not enough gold!", 1000);
+                 }
+             }
+
+              tryTrainUnit(type, owner = 'player') {
+                 const stats = CONFIG.UNIT_STATS[type];
+                 if (!stats) return;
+
+                 // Find a suitable building (Base for Worker, Barracks for others)
+                 let spawner = null;
+                 const requiredBuilding = (type === 'Worker') ? 'Base' : 'Barracks';
+
+                 for (const entity of this.entities) {
+                     if (entity instanceof Building && entity.owner === owner && entity.type === requiredBuilding && entity.hp > 0) {
+                         spawner = entity;
+                         break;
+                     }
+                 }
+
+                 if (!spawner) {
+                     if (owner === 'player') {
+                         this.showMessage(`Need a ${requiredBuilding} to train ${type}!`, 1500);
+                         this.clearButtonSelections(); // Clear selection as training failed
+                     }
+                     console.log(`${owner} cannot train ${type}: No ${requiredBuilding}`);
+                     return;
+                 }
+
+                 if (this.spendGold(stats.cost, owner)) {
+                     console.log(`${owner} training ${type}`);
+                     // Spawn unit near the spawner building
+                     const spawnOffset = spawner.width / 2 + CONFIG.UNIT_SIZE; // Place slightly outside
+                     const spawnX = spawner.x + spawner.width / 2 + (Math.random() * spawnOffset * 2 - spawnOffset);
+                     const spawnY = spawner.y + spawner.height + CONFIG.UNIT_SIZE; // Spawn below building
+                     const newUnit = new Unit(spawnX, spawnY, owner, type);
+                     this.entities.push(newUnit);
+                 } else {
+                      if (owner === 'player') {
+                         this.showMessage(`Not enough gold for ${type}!`, 1000);
+                         this.clearButtonSelections(); // Clear selection as training failed
+                      }
+                     console.log(`${owner} cannot train ${type}: Not enough gold`);
+                 }
+              }
+
+             // --- AI Logic ---
+             runAI() {
+                 if (this.gameOver) return;
+
+                 console.log("AI Tick...");
+                 const aiEntities = this.entities.filter(e => e.owner === 'ai');
+                 const aiUnits = aiEntities.filter(e => e instanceof Unit);
+                 const aiBuildings = aiEntities.filter(e => e instanceof Building);
+                 const aiBase = aiBuildings.find(b => b.type === 'Base');
+                 const aiBarracks = aiBuildings.find(b => b.type === 'Barracks');
+                 const aiMines = aiBuildings.filter(b => b.type === 'Mine');
+                 const aiWorkers = aiUnits.filter(u => u.type === 'Worker');
+
+                 // 1. Assign idle workers to mining (if mines exist)
+                 aiWorkers.forEach(worker => {
+                     if (worker.state === 'idle' && aiMines.length > 0) {
+                         // Find closest mine with space? (Simple: just pick first mine)
+                         const targetMine = aiMines[0];
+                         if (targetMine) {
+                             console.log("AI assigning worker to mine");
+                             worker.setTarget(targetMine);
+                         }
+                     }
+                 });
+
+                 // 2. Build basic structures (Mine, Barracks) - very simple logic
+                 const shouldBuildMine = aiMines.length === 0 && this.aiGold >= CONFIG.BUILDING_STATS.Mine.cost;
+                 const shouldBuildBarracks = !aiBarracks && this.aiGold >= CONFIG.BUILDING_STATS.Barracks.cost;
+
+                 if (shouldBuildMine || shouldBuildBarracks) {
+                     const builderWorker = aiWorkers.find(w => w.state === 'idle'); // Find an idle worker
+                     if (builderWorker) {
+                         const baseCenter = aiBase ? aiBase.getCenter() : { x: CONFIG.CANVAS_WIDTH - 50, y: CONFIG.CANVAS_HEIGHT / 2 };
+                         const buildType = shouldBuildMine ? 'Mine' : 'Barracks';
+                         const stats = CONFIG.BUILDING_STATS[buildType];
+
+                         // Try to find a valid placement near the base
+                         let placed = false;
+                         for (let attempts = 0; attempts < 10; attempts++) {
+                             const angle = Math.random() * Math.PI * 2;
+                             const radius = 60 + Math.random() * 50; // Place 60-110 units away
+                             const buildX = baseCenter.x + Math.cos(angle) * radius;
+                             const buildY = baseCenter.y + Math.sin(angle) * radius;
+
+                             if (this.canPlaceBuilding(buildType, buildX + stats.size / 2, buildY + stats.size / 2)) {
+                                 if (this.spendGold(stats.cost, 'ai')) {
+                                     console.log(`AI placing ${buildType}`);
+                                     this.entities.push(new Building(buildX, buildY, 'ai', buildType));
+                                     placed = true;
+                                     break; // Stop trying after successful placement
+                                 }
+                             }
+                         }
+                         if (!placed) console.log(`AI failed to place ${buildType}`);
+                     }
+                 }
+
+
+                 // 3. Train units (Workers first, then combat units)
+                 const workerCount = aiWorkers.length;
+                 const combatUnitCount = aiUnits.length - workerCount;
+
+                 if (workerCount < 5 && this.aiGold >= CONFIG.UNIT_STATS.Worker.cost) {
+                     console.log("AI training Worker");
+                     this.tryTrainUnit('Worker', 'ai');
+                 } else if (aiBarracks && combatUnitCount < 10 && this.aiGold >= CONFIG.UNIT_STATS.Soldier.cost) {
+                      // Simple: just train soldiers for now
+                     console.log("AI training Soldier");
+                     this.tryTrainUnit('Soldier', 'ai');
+                 }
+
+                 // 4. Attack periodically (very simple "attack move" towards player base)
+                 // Use a separate timer or check elapsed time for attacks
+                 // For simplicity, link it loosely to the AI tick for now
+                 if (Math.random() < 0.2) { // ~20% chance each AI tick to consider attacking
+                     const combatUnits = aiUnits.filter(u => u.type !== 'Worker' && u.state === 'idle');
+                     if (combatUnits.length >= 3) { // Attack if 3+ idle combat units
+                         console.log("AI launching attack!");
+                         const playerBase = this.entities.find(e => e.owner === 'player' && e.type === 'Base');
+                         const targetPos = playerBase ? playerBase.getCenter() : { x: 50, y: CONFIG.CANVAS_HEIGHT / 2 }; // Target player base or general area
+                         combatUnits.forEach(unit => {
+                             unit.setTarget(targetPos); // Send units towards the target position
+                         });
+                     }
+                 }
+             }
+
+
+            // --- Game Loop ---
+            update(deltaTime) {
+                if (this.gameOver) return;
+
+                // Update all entities (units, buildings)
+                this.entities.forEach(entity => entity.update(deltaTime, this.entities, this.projectiles));
+
+                // Update projectiles
+                this.projectiles.forEach(p => p.update(deltaTime));
+
+                // Remove dead entities and projectiles
+                this.entities = this.entities.filter(entity => entity.hp > 0);
+                this.projectiles = this.projectiles.filter(p => p.hp > 0);
+
+                // Remove dead units from selection
+                this.selectedUnits = this.selectedUnits.filter(unit => unit.hp > 0);
+
+                // Check win/loss conditions
+                const playerBase = this.entities.find(e => e.owner === 'player' && e.type === 'Base');
+                const aiBase = this.entities.find(e => e.owner === 'ai' && e.type === 'Base');
+                const playerUnits = this.entities.filter(e => e.owner === 'player' && e instanceof Unit);
+                 const aiUnits = this.entities.filter(e => e.owner === 'ai' && e instanceof Unit);
+
+
+                if (!playerBase || (playerUnits.length === 0 && this.playerGold < CONFIG.UNIT_STATS.Worker.cost && !this.entities.some(e=> e.owner === 'player' && e instanceof Building && e.provides_workers))) {
+                    this.endGame('AI');
+                } else if (!aiBase || (aiUnits.length === 0 && this.aiGold < CONFIG.UNIT_STATS.Worker.cost && !this.entities.some(e=> e.owner === 'ai' && e instanceof Building && e.provides_workers))) {
+                    this.endGame('Player');
+                }
+            }
+
+            render() {
+                // Clear canvas
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                this.ctx.fillStyle = '#fafad2'; // Background color
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+
+                // Draw all entities
+                this.entities.forEach(entity => entity.draw(this.ctx));
+
+                 // Draw projectiles
+                 this.projectiles.forEach(p => p.draw(this.ctx));
+
+                // Draw building placement preview
+                if (this.buildingToPlace) {
+                    const stats = CONFIG.BUILDING_STATS[this.buildingToPlace];
+                    if (stats) {
+                        const previewX = this.mousePos.x - stats.size / 2;
+                        const previewY = this.mousePos.y - stats.size / 2;
+                        this.ctx.fillStyle = CONFIG.BUILD_PREVIEW_COLOR;
+                        this.ctx.fillRect(previewX, previewY, stats.size, stats.size);
+                        // Indicate if placement is valid (optional)
+                        if (!this.canPlaceBuilding(this.buildingToPlace, this.mousePos.x, this.mousePos.y)) {
+                             this.ctx.strokeStyle = 'red';
+                             this.ctx.lineWidth = 2;
+                             this.ctx.strokeRect(previewX, previewY, stats.size, stats.size);
+                        }
+                    }
+                }
+
+                 // Draw selection rectangle
+                 if (this.isDragging && !this.buildingToPlace && !this.unitToTrain) {
+                     this.ctx.strokeStyle = CONFIG.SELECTION_COLOR;
+                     this.ctx.lineWidth = 1;
+                     this.ctx.strokeRect(
+                         this.dragStartPos.x, this.dragStartPos.y,
+                         this.mousePos.x - this.dragStartPos.x,
+                         this.mousePos.y - this.dragStartPos.y
+                     );
+                 }
+            }
+
+            gameLoop(timestamp) {
+                if (this.gameOver) {
+                     console.log("Game loop stopped.");
+                     return; // Stop the loop if game is over
+                }
+
+                const deltaTime = timestamp - this.lastTimestamp;
+                this.lastTimestamp = timestamp;
+
+                // Ensure deltaTime is reasonable (e.g., prevent huge jumps if tabbed away)
+                const effectiveDeltaTime = Math.min(deltaTime, 100); // Cap delta time at 100ms
+
+                this.update(effectiveDeltaTime);
+                this.render();
+
+                requestAnimationFrame(this.gameLoop);
+            }
+
+             endGame(winner) {
+                 if (this.gameOver) return; // Prevent multiple calls
+                 this.gameOver = true;
+                 this.winner = winner;
+                 console.log(`Game Over! Winner: ${winner}`);
+                 this.showMessage(`${winner} Wins!`, 5000, true); // Show longer message, don't auto-hide if true
+                 // Stop timers
+                 if (this.resourceTimer) clearInterval(this.resourceTimer);
+                 if (this.aiTimer) clearInterval(this.aiTimer);
+                 // The game loop will stop itself on the next frame check
+             }
+
+             showMessage(text, duration = 2000, persist = false) {
+                 this.messageBox.textContent = text;
+                 this.messageBox.style.display = 'block';
+                 if (!persist) {
+                     setTimeout(() => {
+                         this.hideMessage();
+                     }, duration);
+                 }
+             }
+
+             hideMessage() {
+                 this.messageBox.style.display = 'none';
+             }
+
+             // --- Save/Load Functionality ---
+             saveGame() {
+                 if (this.gameOver) {
+                    this.showMessage("Cannot save finished game", 1500);
+                    return;
+                 }
+                 try {
+                     const saveData = {
+                         playerGold: this.playerGold,
+                         aiGold: this.aiGold,
+                         entities: this.entities.map(e => ({ // Serialize necessary data
+                             type: e.type,
+                             owner: e.owner,
+                             x: e.x,
+                             y: e.y,
+                             hp: e.hp,
+                             state: e.state, // For units
+                             // Add other relevant state if needed (e.g., target id)
+                         })),
+                         // Note: Projectiles are not saved, they are transient
+                     };
+                     localStorage.setItem('stickFigureBattleSave', JSON.stringify(saveData));
+                     this.showMessage("Game Saved!", 1500);
+                     console.log("Game saved.");
+                 } catch (error) {
+                     console.error("Error saving game:", error);
+                     this.showMessage("Error saving game!", 1500);
+                 }
+             }
+
+              loadGame() {
+                 try {
+                     const savedData = localStorage.getItem('stickFigureBattleSave');
+                     if (savedData) {
+                         const parsedData = JSON.parse(savedData);
+
+                         // Stop current game timers before loading
+                         if (this.resourceTimer) clearInterval(this.resourceTimer);
+                         if (this.aiTimer) clearInterval(this.aiTimer);
+                         this.gameOver = true; // Temporarily stop game loop
+
+                         this.playerGold = parsedData.playerGold;
+                         this.aiGold = parsedData.aiGold;
+                         this.entities = [];
+                         this.projectiles = []; // Clear projectiles
+                         this.selectedUnits = [];
+                         this.buildingToPlace = null;
+                         this.unitToTrain = null;
+
+                         parsedData.entities.forEach(savedEntity => {
+                             let entity = null;
+                             if (CONFIG.UNIT_STATS[savedEntity.type]) { // It's a unit
+                                 entity = new Unit(savedEntity.x, savedEntity.y, savedEntity.owner, savedEntity.type);
+                                 entity.state = savedEntity.state || 'idle'; // Restore state
+                             } else if (CONFIG.BUILDING_STATS[savedEntity.type]) { // It's a building
+                                 entity = new Building(savedEntity.x, savedEntity.y, savedEntity.owner, savedEntity.type);
+                             }
+
+                             if (entity) {
+                                 entity.hp = savedEntity.hp;
+                                 // Restore other state if needed
+                                 this.entities.push(entity);
+                             }
+                         });
+
+                         this.updateResourceDisplay();
+                         this.clearButtonSelections();
+                         this.hideMessage();
+
+                         // Restart timers and game loop
+                         this.gameOver = false; // Allow game loop to run again
+                         // this.resourceTimer = setInterval(() => this.updateResources(), CONFIG.RESOURCE_INTERVAL);
+                         this.aiTimer = setInterval(() => this.runAI(), CONFIG.AI_TRAIN_INTERVAL);
+                         this.lastTimestamp = performance.now(); // Reset timestamp to avoid large jump
+                         requestAnimationFrame(this.gameLoop);
+
+                         this.showMessage("Game Loaded!", 1500);
+                         console.log("Game loaded.");
+
+                     } else {
+                         this.showMessage("No save data found.", 1500);
+                         console.log("No save data found.");
+                     }
+                 } catch (error) {
+                     console.error("Error loading game:", error);
+                     this.showMessage("Error loading game!", 1500);
+                     this.resetGame(); // Reset to a clean state on error
+                 }
+             }
+        }
+
+        // --- Initialize Game ---
+        let game;
+        window.onload = () => {
+             game = new Game('gameCanvas');
+             // game.gameLoop(); // Start the loop - now started in resetGame/loadGame
+        };
+
+    </script>
+</body>
+</html>
